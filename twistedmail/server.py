@@ -29,10 +29,7 @@ class Mailer(object):
         result.addCallbacks(self.on_message_sent, self.on_send_error)
         reactor.run()
 
-    def send_mail(self,
-        from_address, to_address,
-        message
-        ):
+    def send_mail(self, from_address, to_address, message):
         # Create a context factory which only allows SSLv3 and does not verify
         # the peer's certificate.
         context_factory = ClientContextFactory()
@@ -84,10 +81,6 @@ class Mail(CollectionModel):
     def get_mail(self):
         mail_buffer = 'Subject: %s\r\n%s' % (self.subject, self.message)
         return StringIO.StringIO(mail_buffer)
-
-    # result.addCallbacks(cbSentMessage, ebSentMessage)
-    # reactor.run()
-
 
 log.startLogging(sys.stdout)
 
