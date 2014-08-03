@@ -1,0 +1,16 @@
+ArangoPy==0.0.20
+Twisted==14.0.0
+argparse==1.2.1
+cffi==0.8.6
+characteristic==0.1.0
+cryptography==0.5.2
+pyOpenSSL==0.14
+pyasn1==0.1.7
+pyasn1-modules==0.0.5
+pycparser==2.10
+requests==2.3.0
+service-identity==1.0.0
+six==1.7.3
+slumber==0.6.0
+wsgiref==0.1.2
+zope.interface==4.1.1
