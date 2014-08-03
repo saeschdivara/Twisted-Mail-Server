@@ -1,164 +1,95 @@
-
-"""
-Demonstrate sending mail via SMTP while employing TLS and performing
-authentication.
-"""
 import StringIO
-
 import sys
 
 from OpenSSL.SSL import TLSv1_METHOD
 
+from arangodb.api import Client
+from arangodb.models import CollectionModel
+
+from twisted.python import log
 from twisted.mail.smtp import ESMTPSenderFactory
-from twisted.python.usage import Options, UsageError
 from twisted.internet.ssl import ClientContextFactory
 from twisted.internet.defer import Deferred
 from twisted.internet import reactor
 
-def sendmail(
-    authenticationUsername, authenticationSecret,
-    fromAddress, toAddress,
-    messageFile,
-    smtpHost, smtpPort=25
-    ):
-    """
-    @param authenticationUsername: The username with which to authenticate.
-    @param authenticationSecret: The password with which to authenticate.
-    @param fromAddress: The SMTP reverse path (ie, MAIL FROM)
-    @param toAddress: The SMTP forward path (ie, RCPT TO)
-    @param messageFile: A file-like object containing the headers and body of
-    the message to send.
-    @param smtpHost: The MX host to which to connect.
-    @param smtpPort: The port number to which to connect.
 
-    @return: A Deferred which will be called back when the message has been
-    sent or which will errback if it cannot be sent.
-    """
+class Mailer(object):
 
-    # Create a context factory which only allows SSLv3 and does not verify
-    # the peer's certificate.
-    contextFactory = ClientContextFactory()
-    contextFactory.method = TLSv1_METHOD
+    def __init__(self, smtp_host, smtp_port=25, authentication=False, user='', password=''):
 
-    resultDeferred = Deferred()
+        self.smtp_host = smtp_host
+        self.smtp_port = smtp_port
+        self.use_authentication = authentication
+        self.user = user
+        self.password = password
 
-    senderFactory = ESMTPSenderFactory(
-        authenticationUsername,
-        authenticationSecret,
-        fromAddress,
-        toAddress,
-        messageFile,
-        resultDeferred,
-        contextFactory=contextFactory)
+    def send(self, from_address, to_address, mail):
 
-    reactor.connectTCP(smtpHost, smtpPort, senderFactory)
+        result = self.send_mail(from_address, to_address, message=mail.get_mail())
+        result.addCallbacks(self.on_message_sent, self.on_send_error)
+        reactor.run()
 
-    return resultDeferred
+    def send_mail(self,
+        from_address, to_address,
+        message
+        ):
+        # Create a context factory which only allows SSLv3 and does not verify
+        # the peer's certificate.
+        context_factory = ClientContextFactory()
+        context_factory.method = TLSv1_METHOD
 
+        resultDeferred = Deferred()
 
+        senderFactory = ESMTPSenderFactory(
+            self.user,
+            self.password,
+            from_address,
+            to_address,
+            message,
+            resultDeferred,
+            contextFactory=context_factory,
+            requireAuthentication=self.use_authentication)
 
-class SendmailOptions(Options):
-    synopsis = "smtpclient_tls.py [options]"
+        reactor.connectTCP(self.smtp_host, self.smtp_port, senderFactory)
 
-    optParameters = [
-        ('username', 'u', None,
-         'The username with which to authenticate to the SMTP server.'),
-        ('password', 'p', None,
-         'The password with which to authenticate to the SMTP server.'),
-        ('from-address', 'f', None,
-         'The address from which to send the message.'),
-        ('to-address', 't', None,
-         'The address to which to send the message.'),
-        ('message', 'm', None,
-         'The filename which contains the message to send.'),
-        ('smtp-host', 'h', None,
-         'The host through which to send the message.'),
-        ('smtp-port', None, '25',
-         'The port number on smtp-host to which to connect.')]
+        return resultDeferred
 
-
-    def postOptions(self):
+    def on_message_sent(self, result):
         """
-        Parse integer parameters, open the message file, and make sure all
-        required parameters have been specified.
+        Called when the message has been sent.
+
+        Report success to the user and then stop the reactor.
         """
-        try:
-            self['smtp-port'] = int(self['smtp-port'])
-        except ValueError:
-            raise UsageError("--smtp-port argument must be an integer.")
-        if self['username'] is None:
-            raise UsageError(
-                "Must specify authentication username with --username")
-        if self['password'] is None:
-            raise UsageError(
-                "Must specify authentication password with --password")
-        if self['from-address'] is None:
-            raise UsageError("Must specify from address with --from-address")
-        if self['to-address'] is None:
-            raise UsageError("Must specify from address with --to-address")
-        if self['smtp-host'] is None:
-            raise UsageError("Must specify smtp host with --smtp-host")
-        if self['message'] is None:
-            raise UsageError(
-                "Must specify a message file to send with --message")
-        try:
-            self['message'] = file(self['message'])
-        except Exception, e:
-            raise UsageError(e)
+        print "Message sent"
+        reactor.stop()
+
+    def on_send_error(self, err):
+        """
+        Called if the message cannot be sent.
+
+        Report the failure to the user and then stop the reactor.
+        """
+        err.printTraceback()
+        reactor.stop()
 
 
+class Mail(CollectionModel):
 
-def cbSentMessage(result):
-    """
-    Called when the message has been sent.
+    collection_name = 'twisted_mail'
 
-    Report success to the user and then stop the reactor.
-    """
-    print "Message sent"
-    reactor.stop()
+    def __init__(self, subject, message):
+        self.subject = subject
+        self.message = message
 
+    def get_mail(self):
+        mail_buffer = 'Subject: %s\r\n%s' % (self.subject, self.message)
+        return StringIO.StringIO(mail_buffer)
 
-
-def ebSentMessage(err):
-    """
-    Called if the message cannot be sent.
-
-    Report the failure to the user and then stop the reactor.
-    """
-    err.printTraceback()
-    reactor.stop()
+    # result.addCallbacks(cbSentMessage, ebSentMessage)
+    # reactor.run()
 
 
+log.startLogging(sys.stdout)
 
-def main(args=None):
-    """
-    Parse arguments and send an email based on them.
-    """
-    o = SendmailOptions()
-    o['username'] = ''
-    o['password'] = ''
-    o['from-address'] = ''
-    o['to-address'] = ''
-    o['message'] = StringIO.StringIO(str('''Subject:Test
-    '''))
-    o['smtp-host'] = ''
-    o['smtp-port'] = None
-
-    from twisted.python import log
-    log.startLogging(sys.stdout)
-
-    result = sendmail(
-        o['username'],
-        o['password'],
-        o['from-address'],
-        o['to-address'],
-        o['message'],
-        o['smtp-host'],
-        o['smtp-port'])
-
-    result.addCallbacks(cbSentMessage, ebSentMessage)
-    reactor.run()
-
-
-if __name__ == '__main__':
-    main(sys.argv[1:])
+Client('localhost')
+Mail.init()
